@@ -1,4 +1,4 @@
-# claude-line
+# claude-statusline
 
 A status line for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) that shows you useful info while you work.
 
