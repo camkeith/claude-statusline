@@ -48,7 +48,7 @@ Branch, model, and percentages with no dividers.
 npx @ckeith26/claude-statusline
 ```
 
-Backs up your existing status line (if any), copies the script to `~/.claude/statusline.sh`, and configures your Claude Code settings.
+Backs up your existing status line script and settings, copies the new script to `~/.claude/statusline.sh`, and configures your Claude Code settings.
 
 ## Requirements
 
@@ -68,7 +68,7 @@ brew install jq
 npx @ckeith26/claude-statusline --uninstall
 ```
 
-Restores your previous status line from backup, or removes the script and cleans up settings.
+Restores your previous status line script and settings from backup. If there was no previous status line, it removes the script and cleans up settings.
 
 ## License
 

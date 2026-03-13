@@ -6,6 +6,7 @@ const os = require("os");
 
 const CLAUDE_DIR = path.join(os.homedir(), ".claude");
 const SETTINGS_FILE = path.join(CLAUDE_DIR, "settings.json");
+const SETTINGS_BACKUP = path.join(CLAUDE_DIR, "statusline-settings.bak.json");
 const STATUSLINE_DEST = path.join(CLAUDE_DIR, "statusline.sh");
 const STATUSLINE_SRC = path.resolve(__dirname, "statusline.sh");
 
@@ -80,9 +81,18 @@ function uninstall() {
     try {
       const settings = JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf-8"));
       if (settings.statusLine) {
-        delete settings.statusLine;
-        fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2) + "\n");
-        success(`Removed statusLine from ${dim}settings.json${reset}`);
+        // Restore previous statusLine settings if we have a backup
+        if (fs.existsSync(SETTINGS_BACKUP)) {
+          const prev = JSON.parse(fs.readFileSync(SETTINGS_BACKUP, "utf-8"));
+          settings.statusLine = prev;
+          fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2) + "\n");
+          fs.unlinkSync(SETTINGS_BACKUP);
+          success(`Restored previous statusLine settings from ${dim}statusline-settings.bak.json${reset}`);
+        } else {
+          delete settings.statusLine;
+          fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2) + "\n");
+          success(`Removed statusLine from ${dim}settings.json${reset}`);
+        }
       } else {
         success("Settings already clean");
       }
@@ -156,6 +166,11 @@ function run() {
   ) {
     success("Settings already configured");
   } else {
+    // Back up previous statusLine settings so uninstall can restore them
+    if (settings.statusLine) {
+      fs.writeFileSync(SETTINGS_BACKUP, JSON.stringify(settings.statusLine, null, 2) + "\n");
+      warn(`Backed up previous statusLine settings to ${dim}statusline-settings.bak.json${reset}`);
+    }
     settings.statusLine = statusLineConfig;
     fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2) + "\n");
     success(`Updated ${dim}settings.json${reset} with statusLine config`);
