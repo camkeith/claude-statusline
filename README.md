@@ -1,5 +1,9 @@
 # claude-statusline
 
+[![npm version](https://img.shields.io/npm/v/@ckeith26/claude-statusline)](https://www.npmjs.com/package/@ckeith26/claude-statusline)
+[![npm downloads](https://img.shields.io/npm/dm/@ckeith26/claude-statusline)](https://www.npmjs.com/package/@ckeith26/claude-statusline)
+[![license](https://img.shields.io/npm/l/@ckeith26/claude-statusline)](./LICENSE)
+
 A width-adaptive status line for Claude Code that shows model, context usage, rate limits, git info, and extra usage budget. Automatically adjusts its layout based on available terminal width.
 
 ### Full (wide terminals, 2 lines)
