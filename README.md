@@ -2,39 +2,21 @@
 
 A width-adaptive status line for Claude Code that shows model, context usage, rate limits, git info, and extra usage budget. Automatically adjusts its layout based on available terminal width.
 
-![demo](./.github/demo.png)
+### Full (wide terminals, 2 lines)
 
-## Layout Tiers
+Project name, branch, diffs, full model name, context gauge bar, usage gauges with reset times, and extra budget.
 
-The status line detects your terminal width and picks the best layout:
+![Full layout](./.github/screenshot-full.png)
 
-**Full** (widest terminals, 2 lines)
-```
-Research paper  main [1M,23A,2D] | Opus 4.6 (1M) | ████████   0%
-current ██████ 20% 3pm | weekly ██████  7% 9am, March 19 | extra ██████ $48 left
-```
+### Compact (narrower terminals, 2 lines)
 
-**Wide** (2 lines, abbreviated model name)
-```
-Research paper  main [1M,23A,2D] | Op 4.6 (1M) | 0%
-c ██████ 20% 3pm | w ██████ 7% 9am, 3/19 | ext ██████ $48 left
-```
+Truncated project name, tiny model, context gauge bar, and abbreviated usage gauges.
 
-**Compact** (2 lines, truncated project name, tiny model)
-```
-Research p..  main | Op (1M) | ████████ 0%
-c ██████ 20% 3pm | w ██████ 7%
-```
+![Compact layout](./.github/screenshot-compact.png)
 
-**Narrow** (1 line, percentages only)
-```
-Research p..  main | Op (1M) | 0% | c20% | w7%
-```
+### Narrow and Ultracompact
 
-**Ultracompact** (1 line, no dividers)
-```
-main Op (1M) 0% c20% w7%
-```
+On very small screens, the status line drops to a single line with just percentages and no gauge bars.
 
 ## Features
 
@@ -51,7 +33,7 @@ main Op (1M) 0% c20% w7%
 ## Install
 
 ```bash
-npx @kamranahmedse/claude-statusline
+npx @ckeith26/claude-statusline
 ```
 
 Backs up your existing status line (if any), copies the script to `~/.claude/statusline.sh`, and configures your Claude Code settings.
@@ -71,7 +53,7 @@ brew install jq
 ## Uninstall
 
 ```bash
-npx @kamranahmedse/claude-statusline --uninstall
+npx @ckeith26/claude-statusline --uninstall
 ```
 
 Restores your previous status line from backup, or removes the script and cleans up settings.
