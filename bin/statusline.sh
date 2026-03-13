@@ -1,327 +1,436 @@
-#!/bin/bash
-set -f
+#!/usr/bin/env bash
+# Claude Code Status Line - Catppuccin Macchiato theme
+# Line 1: project, git branch + diff stats, model, context gauge
+# Line 2: weekly gauge, current gauge, session cost
 
+# --- Colors (Catppuccin Macchiato truecolor) ---
+R='\033[0m'                           # reset
+C_RED='\033[38;2;237;135;150m'        # #ed8796 - project name
+C_GREEN='\033[38;2;166;218;149m'      # #a6da95 - git branch
+C_AMBER='\033[38;2;238;212;159m'      # #eed49f - diff stats, cost
+C_PURPLE='\033[38;2;198;160;246m'     # #c6a0f6 - model
+C_TEAL='\033[38;2;139;213;202m'       # #8bd5ca - healthy gauge fill
+C_PEACH='\033[38;2;245;169;127m'      # #f5a97f - bypass mode
+C_MUTED='\033[38;2;110;115;141m'      # #6e738d - labels, hints
+C_OVERLAY='\033[38;2;54;58;79m'       # #363a4f - empty gauge, separators
+
+# --- Read JSON from stdin ---
 input=$(cat)
-
 if [ -z "$input" ]; then
-    printf "Claude"
-    exit 0
+  printf "Claude"
+  exit 0
 fi
 
-# ── Colors ──────────────────────────────────────────────
-blue='\033[38;2;0;153;255m'
-orange='\033[38;2;255;176;85m'
-green='\033[38;2;0;175;80m'
-cyan='\033[38;2;86;182;194m'
-red='\033[38;2;255;85;85m'
-yellow='\033[38;2;230;200;0m'
-white='\033[38;2;220;220;220m'
-magenta='\033[38;2;180;140;255m'
-dim='\033[2m'
-reset='\033[0m'
-
-sep=" ${dim}│${reset} "
-
-# ── Helpers ─────────────────────────────────────────────
-format_tokens() {
-    local num=$1
-    if [ "$num" -ge 1000000 ]; then
-        awk "BEGIN {printf \"%.1fm\", $num / 1000000}"
-    elif [ "$num" -ge 1000 ]; then
-        awk "BEGIN {printf \"%.0fk\", $num / 1000}"
-    else
-        printf "%d" "$num"
-    fi
-}
-
-color_for_pct() {
-    local pct=$1
-    if [ "$pct" -ge 90 ]; then printf "$red"
-    elif [ "$pct" -ge 70 ]; then printf "$yellow"
-    elif [ "$pct" -ge 50 ]; then printf "$orange"
-    else printf "$green"
-    fi
-}
-
-build_bar() {
-    local pct=$1
-    local width=$2
-    [ "$pct" -lt 0 ] 2>/dev/null && pct=0
-    [ "$pct" -gt 100 ] 2>/dev/null && pct=100
-
-    local filled=$(( pct * width / 100 ))
-    local empty=$(( width - filled ))
-    local bar_color
-    bar_color=$(color_for_pct "$pct")
-
-    local filled_str="" empty_str=""
-    for ((i=0; i<filled; i++)); do filled_str+="●"; done
-    for ((i=0; i<empty; i++)); do empty_str+="○"; done
-
-    printf "${bar_color}${filled_str}${dim}${empty_str}${reset}"
-}
-
-iso_to_epoch() {
-    local iso_str="$1"
-
-    local epoch
-    epoch=$(date -d "${iso_str}" +%s 2>/dev/null)
-    if [ -n "$epoch" ]; then
-        echo "$epoch"
-        return 0
-    fi
-
-    local stripped="${iso_str%%.*}"
-    stripped="${stripped%%Z}"
-    stripped="${stripped%%+*}"
-    stripped="${stripped%%-[0-9][0-9]:[0-9][0-9]}"
-
-    if [[ "$iso_str" == *"Z"* ]] || [[ "$iso_str" == *"+00:00"* ]] || [[ "$iso_str" == *"-00:00"* ]]; then
-        epoch=$(env TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%S" "$stripped" +%s 2>/dev/null)
-    else
-        epoch=$(date -j -f "%Y-%m-%dT%H:%M:%S" "$stripped" +%s 2>/dev/null)
-    fi
-
-    if [ -n "$epoch" ]; then
-        echo "$epoch"
-        return 0
-    fi
-
-    return 1
-}
-
-format_reset_time() {
-    local iso_str="$1"
-    local style="$2"
-    [ -z "$iso_str" ] || [ "$iso_str" = "null" ] && return
-
-    local epoch
-    epoch=$(iso_to_epoch "$iso_str")
-    [ -z "$epoch" ] && return
-
-    local result=""
-    case "$style" in
-        time)
-            result=$(date -j -r "$epoch" +"%l:%M%p" 2>/dev/null | sed 's/^ //; s/\.//g' | tr '[:upper:]' '[:lower:]')
-            [ -z "$result" ] && result=$(date -d "@$epoch" +"%l:%M%P" 2>/dev/null | sed 's/^ //; s/\.//g')
-            ;;
-        datetime)
-            result=$(date -j -r "$epoch" +"%b %-d, %l:%M%p" 2>/dev/null | sed 's/  / /g; s/^ //; s/\.//g' | tr '[:upper:]' '[:lower:]')
-            [ -z "$result" ] && result=$(date -d "@$epoch" +"%b %-d, %l:%M%P" 2>/dev/null | sed 's/  / /g; s/^ //; s/\.//g')
-            ;;
-        *)
-            result=$(date -j -r "$epoch" +"%b %-d" 2>/dev/null | tr '[:upper:]' '[:lower:]')
-            [ -z "$result" ] && result=$(date -d "@$epoch" +"%b %-d" 2>/dev/null)
-            ;;
-    esac
-    printf "%s" "$result"
-}
-
-# ── Extract JSON data ───────────────────────────────────
-model_name=$(echo "$input" | jq -r '.model.display_name // "Claude"')
-
-size=$(echo "$input" | jq -r '.context_window.context_window_size // 200000')
-[ "$size" -eq 0 ] 2>/dev/null && size=200000
-
-input_tokens=$(echo "$input" | jq -r '.context_window.current_usage.input_tokens // 0')
-cache_create=$(echo "$input" | jq -r '.context_window.current_usage.cache_creation_input_tokens // 0')
-cache_read=$(echo "$input" | jq -r '.context_window.current_usage.cache_read_input_tokens // 0')
-current=$(( input_tokens + cache_create + cache_read ))
-
-used_tokens=$(format_tokens $current)
-total_tokens=$(format_tokens $size)
-
-if [ "$size" -gt 0 ]; then
-    pct_used=$(( current * 100 / size ))
+# --- Parse fields ---
+project_dir=$(echo "$input" | jq -r '.workspace.project_dir // .workspace.current_dir // empty')
+[ -z "$project_dir" ] || [ "$project_dir" = "null" ] && project_dir=$(echo "$input" | jq -r '.cwd // empty')
+project_name=$(basename "${project_dir:-Claude}")
+# Short version for narrow tiers
+if [ ${#project_name} -gt 12 ]; then
+  project_short="${project_name:0:10}.."
 else
-    pct_used=0
+  project_short="$project_name"
 fi
 
-effort="default"
-settings_path="$HOME/.claude/settings.json"
-if [ -f "$settings_path" ]; then
-    effort=$(jq -r '.effortLevel // "default"' "$settings_path" 2>/dev/null)
-fi
+model_full=$(echo "$input" | jq -r '.model.display_name // "Claude"' | sed 's/ context//')
+model_name=$(echo "$model_full" | sed 's/^\([A-Z][a-z]\)[a-z]*/\1/')
+# Tiny: drop version number, e.g. "Op (1M)"
+model_tiny=$(echo "$model_name" | sed 's/ [0-9][0-9.]*//')
+session_cost=$(echo "$input" | jq -r '.cost.total_cost_usd // 0')
 
-# ── LINE 1: Model │ Context % │ Directory (branch) │ Session │ Thinking ──
-pct_color=$(color_for_pct "$pct_used")
-cwd=$(echo "$input" | jq -r '.cwd // ""')
-[ -z "$cwd" ] || [ "$cwd" = "null" ] && cwd=$(pwd)
-dirname=$(basename "$cwd")
-
+# --- Git info ---
 git_branch=""
-git_dirty=""
-if git -C "$cwd" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    git_branch=$(git -C "$cwd" symbolic-ref --short HEAD 2>/dev/null)
-    if [ -n "$(git -C "$cwd" status --porcelain 2>/dev/null)" ]; then
-        git_dirty="*"
+diff_str=""
+if [ -n "$project_dir" ] && git -C "$project_dir" rev-parse --git-dir >/dev/null 2>&1; then
+  git_branch=$(git -C "$project_dir" rev-parse --abbrev-ref HEAD 2>/dev/null)
+  git_status=$(git -C "$project_dir" --no-optional-locks status --porcelain 2>/dev/null)
+  if [ -n "$git_status" ]; then
+    m=$(echo "$git_status" | grep -c '^ M\|^M' || true)
+    a=$(echo "$git_status" | grep -c '^A\|^??' || true)
+    d=$(echo "$git_status" | grep -c '^ D\|^D' || true)
+    parts=()
+    [ "$m" -gt 0 ] 2>/dev/null && parts+=("${m}M")
+    [ "$a" -gt 0 ] 2>/dev/null && parts+=("${a}A")
+    [ "$d" -gt 0 ] 2>/dev/null && parts+=("${d}D")
+    if [ ${#parts[@]} -gt 0 ]; then
+      diff_str=$(IFS=','; echo "${parts[*]}")
     fi
+  fi
 fi
 
-session_duration=""
-session_start=$(echo "$input" | jq -r '.session.start_time // empty')
-if [ -n "$session_start" ] && [ "$session_start" != "null" ]; then
-    start_epoch=$(iso_to_epoch "$session_start")
-    if [ -n "$start_epoch" ]; then
-        now_epoch=$(date +%s)
-        elapsed=$(( now_epoch - start_epoch ))
-        if [ "$elapsed" -ge 3600 ]; then
-            session_duration="$(( elapsed / 3600 ))h$(( (elapsed % 3600) / 60 ))m"
-        elif [ "$elapsed" -ge 60 ]; then
-            session_duration="$(( elapsed / 60 ))m"
-        else
-            session_duration="${elapsed}s"
-        fi
-    fi
-fi
-
-line1="${blue}${model_name}${reset}"
-line1+="${sep}"
-line1+="✍️ ${pct_color}${pct_used}%${reset}"
-line1+="${sep}"
-line1+="${cyan}${dirname}${reset}"
-if [ -n "$git_branch" ]; then
-    line1+=" ${green}(${git_branch}${red}${git_dirty}${green})${reset}"
-fi
-if [ -n "$session_duration" ]; then
-    line1+="${sep}"
-    line1+="${dim}⏱ ${reset}${white}${session_duration}${reset}"
-fi
-line1+="${sep}"
-case "$effort" in
-    high)   line1+="${magenta}● ${effort}${reset}" ;;
-    medium) line1+="${dim}◑ ${effort}${reset}" ;;
-    low)    line1+="${dim}◔ ${effort}${reset}" ;;
-    *)      line1+="${dim}◑ ${effort}${reset}" ;;
-esac
-
-# ── OAuth token resolution ──────────────────────────────
-get_oauth_token() {
-    local token=""
-
-    if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
-        echo "$CLAUDE_CODE_OAUTH_TOKEN"
-        return 0
-    fi
-
-    if command -v security >/dev/null 2>&1; then
-        local blob
-        blob=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null)
-        if [ -n "$blob" ]; then
-            token=$(echo "$blob" | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null)
-            if [ -n "$token" ] && [ "$token" != "null" ]; then
-                echo "$token"
-                return 0
-            fi
-        fi
-    fi
-
-    local creds_file="${HOME}/.claude/.credentials.json"
-    if [ -f "$creds_file" ]; then
-        token=$(jq -r '.claudeAiOauth.accessToken // empty' "$creds_file" 2>/dev/null)
-        if [ -n "$token" ] && [ "$token" != "null" ]; then
-            echo "$token"
-            return 0
-        fi
-    fi
-
-    if command -v secret-tool >/dev/null 2>&1; then
-        local blob
-        blob=$(timeout 2 secret-tool lookup service "Claude Code-credentials" 2>/dev/null)
-        if [ -n "$blob" ]; then
-            token=$(echo "$blob" | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null)
-            if [ -n "$token" ] && [ "$token" != "null" ]; then
-                echo "$token"
-                return 0
-            fi
-        fi
-    fi
-
-    echo ""
+# --- Helpers ---
+format_tokens() {
+  local t=$1
+  if [ "$t" -ge 1000000 ] 2>/dev/null; then
+    awk "BEGIN {printf \"%.0fM\", $t / 1000000}"
+  elif [ "$t" -ge 10000 ] 2>/dev/null; then
+    awk "BEGIN {printf \"%.0fK\", $t / 1000}"
+  elif [ "$t" -ge 1000 ] 2>/dev/null; then
+    awk "BEGIN {printf \"%.1fK\", $t / 1000}"
+  else
+    echo "$t"
+  fi
 }
 
-# ── Fetch usage data (cached) ──────────────────────────
-cache_file="/tmp/claude/statusline-usage-cache.json"
-cache_max_age=60
-mkdir -p /tmp/claude
+# Gauge with color thresholds using background-colored spaces (avoids Unicode width glitches).
+# Args: pct, mode (context|budget)
+gauge() {
+  local pct=$1 mode=${2:-context}
+  [ "$pct" -lt 0 ] 2>/dev/null && pct=0
+  [ "$pct" -gt 100 ] 2>/dev/null && pct=100
+  local nf=$((pct * 10 / 100)) ne
+  [ "$pct" -gt 0 ] && [ "$nf" -eq 0 ] && nf=1
+  [ "$nf" -gt 10 ] && nf=10
+  ne=$((10 - nf))
 
-needs_refresh=true
+  local fill_bg
+  if [ "$mode" = "budget" ]; then
+    if [ "$pct" -lt 50 ]; then fill_bg='\033[48;2;166;218;149m'      # green bg
+    elif [ "$pct" -lt 80 ]; then fill_bg='\033[48;2;238;212;159m'    # amber bg
+    else fill_bg='\033[48;2;237;135;150m'                             # red bg
+    fi
+  else
+    if [ "$pct" -lt 40 ]; then fill_bg='\033[48;2;139;213;202m'      # teal bg
+    elif [ "$pct" -lt 70 ]; then fill_bg='\033[48;2;238;212;159m'    # amber bg
+    else fill_bg='\033[48;2;237;135;150m'                             # red bg
+    fi
+  fi
+  local empty_bg='\033[48;2;54;58;79m'  # overlay bg
+
+  local filled="" empty=""
+  for ((i=0; i<nf; i++)); do filled+=" "; done
+  for ((i=0; i<ne; i++)); do empty+=" "; done
+  printf "%b%s%b%s%b" "$fill_bg" "$filled" "$empty_bg" "$empty" "$R"
+}
+
+fmt_reset() {
+  local iso="$1"
+  [ -z "$iso" ] || [ "$iso" = "null" ] && return
+
+  # Strip fractional seconds: "2026-03-13T19:00:00.511778+00:00" -> "2026-03-13T19:00:00+00:00"
+  local clean
+  if [[ "$iso" == *"."* ]]; then
+    local before_dot="${iso%%.*}"
+    local after_dot="${iso#*.}"
+    # after_dot is like "511778+00:00" or "511778Z"
+    local tz_part=""
+    if [[ "$after_dot" == *"+"* ]]; then
+      tz_part="+${after_dot#*+}"
+    elif [[ "$after_dot" == *"-"* ]]; then
+      tz_part="-${after_dot#*-}"
+    elif [[ "$after_dot" == *"Z"* ]]; then
+      tz_part="Z"
+    fi
+    clean="${before_dot}${tz_part}"
+  else
+    clean="$iso"
+  fi
+
+  # Convert ISO with any timezone offset to epoch
+  # Extract the datetime and offset parts
+  local dt_part tz_part=""
+  if [[ "$clean" == *"Z" ]]; then
+    dt_part="${clean%%Z*}"
+    tz_part="+00:00"
+  elif [[ "$clean" =~ (.+)([+-][0-9]{2}:[0-9]{2})$ ]]; then
+    dt_part="${BASH_REMATCH[1]}"
+    tz_part="${BASH_REMATCH[2]}"
+  else
+    dt_part="$clean"
+  fi
+
+  local epoch
+  if [ -n "$tz_part" ]; then
+    # Parse datetime as-is, then adjust for offset to get true UTC epoch
+    local raw_epoch
+    raw_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%S" "$dt_part" "+%s" 2>/dev/null)
+    if [ -n "$raw_epoch" ]; then
+      # raw_epoch interpreted the time as local; we need to undo that and apply the real offset
+      # Get local UTC offset in seconds
+      local local_off_str local_off_sec
+      local_off_str=$(date -j -f "%Y-%m-%dT%H:%M:%S" "$dt_part" "+%z" 2>/dev/null)
+      local sign_l=${local_off_str:0:1} hh_l=${local_off_str:1:2} mm_l=${local_off_str:3:2}
+      local_off_sec=$(( (10#$hh_l * 3600 + 10#$mm_l * 60) ))
+      [ "$sign_l" = "-" ] && local_off_sec=$(( -local_off_sec ))
+      # Parse the actual offset from the timestamp (strip colon: +00:00 -> +0000)
+      local tz_flat="${tz_part/:/}"
+      local sign_t=${tz_flat:0:1} hh_t=${tz_flat:1:2} mm_t=${tz_flat:3:2}
+      local tz_off_sec=$(( (10#$hh_t * 3600 + 10#$mm_t * 60) ))
+      [ "$sign_t" = "-" ] && tz_off_sec=$(( -tz_off_sec ))
+      # Correct: raw_epoch assumed local offset, but real offset is tz_off_sec
+      epoch=$(( raw_epoch + local_off_sec - tz_off_sec ))
+    fi
+  fi
+  # Fallback: GNU date handles ISO offsets natively
+  [ -z "$epoch" ] && epoch=$(date -d "$clean" "+%s" 2>/dev/null)
+  [ -z "$epoch" ] && return
+
+  # Format in local time
+  local today_date reset_date time_str
+  today_date=$(date "+%Y-%m-%d")
+  reset_date=$(date -r "$epoch" "+%Y-%m-%d" 2>/dev/null)
+  time_str=$(date -r "$epoch" "+%-I:%M%p" 2>/dev/null | tr 'A-Z' 'a-z' | sed 's/:00//')
+  if [ "$reset_date" = "$today_date" ]; then
+    printf "%s" "$time_str"
+  else
+    local mode="${2:-short}"
+    local md
+    if [ "$mode" = "full" ]; then
+      md=$(date -r "$epoch" "+%B %-d" 2>/dev/null)
+    else
+      md=$(date -r "$epoch" "+%-m/%-d" 2>/dev/null)
+    fi
+    printf "%s, %s" "$time_str" "$md"
+  fi
+}
+
+# --- Context window ---
+ctx_pct=0
+ctx_used=0
+ctx_max=200000
+ctx_used_pct=$(echo "$input" | jq -r '.context_window.used_percentage // empty')
+if [ -n "$ctx_used_pct" ] && [ "$ctx_used_pct" != "null" ]; then
+  ctx_pct=$(printf "%.0f" "$ctx_used_pct")
+fi
+ctx_max=$(echo "$input" | jq -r '.context_window.context_window_size // 200000')
+ctx_usage=$(echo "$input" | jq '.context_window.current_usage // empty')
+if [ -n "$ctx_usage" ] && [ "$ctx_usage" != "null" ] && [ "$ctx_usage" != "" ]; then
+  ctx_used=$(echo "$ctx_usage" | jq '(.input_tokens // 0) + (.cache_creation_input_tokens // 0) + (.cache_read_input_tokens // 0)' 2>/dev/null)
+  [ -z "$ctx_used" ] && ctx_used=0
+  if [ "$ctx_pct" -eq 0 ] && [ "$ctx_max" -gt 0 ] 2>/dev/null; then
+    ctx_pct=$((ctx_used * 100 / ctx_max))
+  fi
+fi
+# If we still don't have used tokens, estimate from percentage
+if [ "$ctx_used" -eq 0 ] && [ "$ctx_pct" -gt 0 ] 2>/dev/null; then
+  ctx_used=$((ctx_pct * ctx_max / 100))
+fi
+
+ctx_used_fmt=$(format_tokens "$ctx_used")
+ctx_max_fmt=$(format_tokens "$ctx_max")
+ctx_gauge=$(gauge "$ctx_pct" context)
+
+# --- OAuth usage API (cached) ---
+USAGE_CACHE="/tmp/claude/statusline-usage-cache.json"
+mkdir -p /tmp/claude 2>/dev/null
+
+get_oauth_token() {
+  if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+    echo "$CLAUDE_CODE_OAUTH_TOKEN"; return 0
+  fi
+  if command -v security >/dev/null 2>&1; then
+    local blob
+    blob=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null)
+    if [ -n "$blob" ]; then
+      local tok
+      tok=$(echo "$blob" | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null)
+      if [ -n "$tok" ] && [ "$tok" != "null" ]; then echo "$tok"; return 0; fi
+    fi
+  fi
+  local cf="${HOME}/.claude/.credentials.json"
+  if [ -f "$cf" ]; then
+    local tok
+    tok=$(jq -r '.claudeAiOauth.accessToken // empty' "$cf" 2>/dev/null)
+    if [ -n "$tok" ] && [ "$tok" != "null" ]; then echo "$tok"; return 0; fi
+  fi
+  echo ""
+}
+
 usage_data=""
-
-if [ -f "$cache_file" ]; then
-    cache_mtime=$(stat -c %Y "$cache_file" 2>/dev/null || stat -f %m "$cache_file" 2>/dev/null)
-    now=$(date +%s)
-    cache_age=$(( now - cache_mtime ))
-    if [ "$cache_age" -lt "$cache_max_age" ]; then
-        needs_refresh=false
-        usage_data=$(cat "$cache_file" 2>/dev/null)
-    fi
+needs_refresh=true
+if [ -f "$USAGE_CACHE" ]; then
+  cache_age=$(( $(date +%s) - $(stat -f%m "$USAGE_CACHE" 2>/dev/null || echo 0) ))
+  [ "$cache_age" -lt 60 ] && needs_refresh=false && usage_data=$(cat "$USAGE_CACHE" 2>/dev/null)
 fi
-
 if $needs_refresh; then
-    token=$(get_oauth_token)
-    if [ -n "$token" ] && [ "$token" != "null" ]; then
-        response=$(curl -s --max-time 5 \
-            -H "Accept: application/json" \
-            -H "Content-Type: application/json" \
-            -H "Authorization: Bearer $token" \
-            -H "anthropic-beta: oauth-2025-04-20" \
-            -H "User-Agent: claude-code/2.1.34" \
-            "https://api.anthropic.com/api/oauth/usage" 2>/dev/null)
-        if [ -n "$response" ] && echo "$response" | jq -e '.five_hour' >/dev/null 2>&1; then
-            usage_data="$response"
-            echo "$response" > "$cache_file"
-        fi
+  tok=$(get_oauth_token)
+  if [ -n "$tok" ] && [ "$tok" != "null" ]; then
+    resp=$(curl -s --max-time 5 \
+      -H "Accept: application/json" \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer $tok" \
+      -H "anthropic-beta: oauth-2025-04-20" \
+      -H "User-Agent: claude-code/2.1.74" \
+      "https://api.anthropic.com/api/oauth/usage" 2>/dev/null)
+    if [ -n "$resp" ] && echo "$resp" | jq -e '.five_hour' >/dev/null 2>&1; then
+      usage_data="$resp"
+      echo "$resp" > "$USAGE_CACHE"
     fi
-    if [ -z "$usage_data" ] && [ -f "$cache_file" ]; then
-        usage_data=$(cat "$cache_file" 2>/dev/null)
-    fi
+  fi
+  # Fall back to stale cache
+  [ -z "$usage_data" ] && [ -f "$USAGE_CACHE" ] && usage_data=$(cat "$USAGE_CACHE" 2>/dev/null)
 fi
 
-# ── Rate limit lines ────────────────────────────────────
-rate_lines=""
-
-if [ -n "$usage_data" ] && echo "$usage_data" | jq -e . >/dev/null 2>&1; then
-    bar_width=10
-
-    five_hour_pct=$(echo "$usage_data" | jq -r '.five_hour.utilization // 0' | awk '{printf "%.0f", $1}')
-    five_hour_reset_iso=$(echo "$usage_data" | jq -r '.five_hour.resets_at // empty')
-    five_hour_reset=$(format_reset_time "$five_hour_reset_iso" "time")
-    five_hour_bar=$(build_bar "$five_hour_pct" "$bar_width")
-    five_hour_pct_color=$(color_for_pct "$five_hour_pct")
-    five_hour_pct_fmt=$(printf "%3d" "$five_hour_pct")
-
-    rate_lines+="${white}current${reset} ${five_hour_bar} ${five_hour_pct_color}${five_hour_pct_fmt}%${reset} ${dim}⟳${reset} ${white}${five_hour_reset}${reset}"
-
-    seven_day_pct=$(echo "$usage_data" | jq -r '.seven_day.utilization // 0' | awk '{printf "%.0f", $1}')
-    seven_day_reset_iso=$(echo "$usage_data" | jq -r '.seven_day.resets_at // empty')
-    seven_day_reset=$(format_reset_time "$seven_day_reset_iso" "datetime")
-    seven_day_bar=$(build_bar "$seven_day_pct" "$bar_width")
-    seven_day_pct_color=$(color_for_pct "$seven_day_pct")
-    seven_day_pct_fmt=$(printf "%3d" "$seven_day_pct")
-
-    rate_lines+="\n${white}weekly${reset}  ${seven_day_bar} ${seven_day_pct_color}${seven_day_pct_fmt}%${reset} ${dim}⟳${reset} ${white}${seven_day_reset}${reset}"
-
-    extra_enabled=$(echo "$usage_data" | jq -r '.extra_usage.is_enabled // false')
-    if [ "$extra_enabled" = "true" ]; then
-        extra_pct=$(echo "$usage_data" | jq -r '.extra_usage.utilization // 0' | awk '{printf "%.0f", $1}')
-        extra_used=$(echo "$usage_data" | jq -r '.extra_usage.used_credits // 0' | awk '{printf "%.2f", $1/100}')
-        extra_limit=$(echo "$usage_data" | jq -r '.extra_usage.monthly_limit // 0' | awk '{printf "%.2f", $1/100}')
-        extra_bar=$(build_bar "$extra_pct" "$bar_width")
-        extra_pct_color=$(color_for_pct "$extra_pct")
-
-        extra_reset=$(date -v+1m -v1d +"%b %-d" 2>/dev/null | tr '[:upper:]' '[:lower:]')
-        if [ -z "$extra_reset" ]; then
-            extra_reset=$(date -d "$(date +%Y-%m-01) +1 month" +"%b %-d" 2>/dev/null | tr '[:upper:]' '[:lower:]')
-        fi
-
-        extra_col="${white}extra${reset}   ${extra_bar} ${extra_pct_color}\$${extra_used}${dim}/${reset}${white}\$${extra_limit}${reset} ${dim}⟳${reset} ${white}${extra_reset}${reset}"
-        rate_lines+="\n${extra_col}"
+# --- Parse usage data ---
+weekly_pct=0; weekly_reset=""
+current_pct=0; current_reset=""
+extra_pct=0; extra_used=""; extra_limit=""; extra_enabled=false
+if [ -n "$usage_data" ]; then
+  weekly_pct=$(echo "$usage_data" | jq -r '.seven_day.utilization // 0' | awk '{printf "%.0f", $1}')
+  current_pct=$(echo "$usage_data" | jq -r '.five_hour.utilization // 0' | awk '{printf "%.0f", $1}')
+  [ "$weekly_pct" -gt 100 ] 2>/dev/null && weekly_pct=100
+  [ "$current_pct" -gt 100 ] 2>/dev/null && current_pct=100
+  weekly_reset_iso=$(echo "$usage_data" | jq -r '.seven_day.resets_at // empty')
+  weekly_reset=$(fmt_reset "$weekly_reset_iso" short)
+  weekly_reset_full=$(fmt_reset "$weekly_reset_iso" full)
+  current_reset=$(fmt_reset "$(echo "$usage_data" | jq -r '.five_hour.resets_at // empty')" short)
+  # Extra usage (only show if enabled and budget > 0)
+  extra_enabled=$(echo "$usage_data" | jq -r '.extra_usage.is_enabled // false')
+  if [ "$extra_enabled" = "true" ]; then
+    extra_limit_raw=$(echo "$usage_data" | jq -r '.extra_usage.monthly_limit // 0')
+    if [ "$extra_limit_raw" -gt 0 ] 2>/dev/null; then
+      extra_pct=$(echo "$usage_data" | jq -r '.extra_usage.utilization // 0' | awk '{printf "%.0f", $1}')
+      [ "$extra_pct" -gt 100 ] 2>/dev/null && extra_pct=100
+      extra_used_raw=$(echo "$usage_data" | jq -r '.extra_usage.used_credits // 0')
+      extra_remaining=$(echo "$extra_used_raw $extra_limit_raw" | awk '{printf "$%.0f", ($2-$1)/100}')
+    else
+      extra_enabled=false
     fi
+  fi
 fi
 
-# ── Output ──────────────────────────────────────────────
-printf "%b" "$line1"
-[ -n "$rate_lines" ] && printf "\n\n%b" "$rate_lines"
+# --- Separator ---
+sep=" ${C_OVERLAY}|${R} "
+
+# =====================================================================
+# Width-adaptive layout: detect terminal width, pick best tier
+# =====================================================================
+
+# stdin is JSON, so tput/stty need /dev/tty to reach the real terminal
+term_cols=$(tput cols < /dev/tty 2>/dev/null || stty size < /dev/tty 2>/dev/null | awk '{print $2}' || echo 80)
+# Right-side Claude Code chrome (effort, tokens, version) shares the first line.
+avail=$((term_cols *  1 / 2))
+
+# Color-coded percentage (no gauge bar). Args: pct, mode
+cpct() {
+  local pct=$1 mode=${2:-context}
+  local color
+  if [ "$mode" = "budget" ]; then
+    if [ "$pct" -lt 50 ]; then color="$C_GREEN"
+    elif [ "$pct" -lt 80 ]; then color="$C_AMBER"
+    else color="$C_RED"
+    fi
+  else
+    if [ "$pct" -lt 40 ]; then color="$C_TEAL"
+    elif [ "$pct" -lt 70 ]; then color="$C_AMBER"
+    else color="$C_RED"
+    fi
+  fi
+  printf "%b%d%%%b" "$color" "$pct" "$R"
+}
+
+# Background-color gauge. Args: pct, width, mode
+bgauge() {
+  local pct=$1 w=${2:-8} mode=${3:-context}
+  [ "$pct" -lt 0 ] 2>/dev/null && pct=0
+  [ "$pct" -gt 100 ] 2>/dev/null && pct=100
+  local nf=$((pct * w / 100))
+  [ "$pct" -gt 0 ] && [ "$nf" -eq 0 ] && nf=1
+  [ "$nf" -gt "$w" ] && nf=$w
+  local ne=$((w - nf))
+  local fill_bg
+  if [ "$mode" = "budget" ]; then
+    if [ "$pct" -lt 50 ]; then fill_bg='\033[48;2;166;218;149m'
+    elif [ "$pct" -lt 80 ]; then fill_bg='\033[48;2;238;212;159m'
+    else fill_bg='\033[48;2;237;135;150m'
+    fi
+  else
+    if [ "$pct" -lt 40 ]; then fill_bg='\033[48;2;139;213;202m'
+    elif [ "$pct" -lt 70 ]; then fill_bg='\033[48;2;238;212;159m'
+    else fill_bg='\033[48;2;237;135;150m'
+    fi
+  fi
+  local empty_bg='\033[48;2;54;58;79m'
+  local filled="" empty=""
+  for ((i=0; i<nf; i++)); do filled+=" "; done
+  for ((i=0; i<ne; i++)); do empty+=" "; done
+  printf "%b%s%b%s%b" "$fill_bg" "$filled" "$empty_bg" "$empty" "$R"
+}
+
+# --- Build single-line output based on available width ---
+# All tiers are single-line (multi-line is unreliable in Claude Code).
+# Content widths measured from actual visible characters:
+#   FULL:    project  branch [diffs] | model | gauge ctx% | c% | w%  (~87 chars)
+#   WIDE:    project  branch | model | ctx% | c% | w%                (~64 chars)
+#   COMPACT: project  branch [diffs] | ctx% | c% | w%               (~52 chars)
+#   NARROW:  project  branch | ctx% | c% | w%                       (~40 chars)
+#   ULTRA:   branch ctx% c% w%                                      (~16 chars)
+
+# Precompute widths for tier selection
+# WIDE uses short model name (Op 4.6 (1M))
+model_line_vis=$((${#project_name} + 2 + ${#git_branch} + 3 + ${#model_name} + 3 + 3 + 3 + 5 + 3 + 4))
+# FULL uses full model name (Opus 4.6 (1M)) + gauge
+full_model_vis=$((${#project_name} + 2 + ${#git_branch} + 3 + ${#model_full} + 3 + 10 + 1 + 4))
+full_line_vis=$full_model_vis
+
+if [ "$avail" -ge "$full_line_vis" ]; then
+  # FULL: line 1 = project + branch + diffs + model + ctx gauge
+  #       line 2 = c gauge + reset | w gauge + reset | ext
+  line1="${C_RED}${project_name}${R}"
+  [ -n "$git_branch" ] && line1+="  ${C_GREEN}${git_branch}${R}"
+  [ -n "$diff_str" ] && line1+=" ${C_AMBER}[${diff_str}]${R}"
+  line1+="${sep}${C_PURPLE}${model_full}${R}"
+  line1+="${sep}$(bgauge "$ctx_pct" 8 context) $(cpct $ctx_pct context)"
+  line2="${C_MUTED}current${R} $(bgauge "$current_pct" 6 budget) $(cpct $current_pct budget)"
+  [ -n "$current_reset" ] && line2+=" ${C_MUTED}${current_reset}${R}"
+  line2+="${sep}${C_MUTED}weekly${R} $(bgauge "$weekly_pct" 6 budget) $(cpct $weekly_pct budget)"
+  [ -n "$weekly_reset_full" ] && line2+=" ${C_MUTED}${weekly_reset_full}${R}"
+  if [ "$extra_enabled" = "true" ]; then
+    line2+="${sep}${C_MUTED}extra${R} $(bgauge "$extra_pct" 6 budget) ${C_MUTED}${extra_remaining} left${R}"
+  fi
+  printf '%b\n%b' "$line1" "$line2"
+
+elif [ "$avail" -ge "$model_line_vis" ]; then
+  # WIDE: line 1 = project + branch + model + ctx%
+  #       line 2 = usage gauges + resets
+  line1="${C_RED}${project_name}${R}"
+  [ -n "$git_branch" ] && line1+="  ${C_GREEN}${git_branch}${R}"
+  [ -n "$diff_str" ] && line1+=" ${C_AMBER}[${diff_str}]${R}"
+  line1+="${sep}${C_PURPLE}${model_name}${R}"
+  line1+="${sep}$(cpct $ctx_pct context)"
+  line2="${C_MUTED}c${R} $(bgauge "$current_pct" 6 budget) $(cpct $current_pct budget)"
+  [ -n "$current_reset" ] && line2+=" ${C_MUTED}${current_reset}${R}"
+  line2+="${sep}${C_MUTED}w${R} $(bgauge "$weekly_pct" 6 budget) $(cpct $weekly_pct budget)"
+  [ -n "$weekly_reset" ] && line2+=" ${C_MUTED}${weekly_reset}${R}"
+  if [ "$extra_enabled" = "true" ]; then
+    line2+="${sep}${C_MUTED}ext${R} $(bgauge "$extra_pct" 6 budget) ${C_MUTED}${extra_remaining} left${R}"
+  fi
+  printf '%b\n%b' "$line1" "$line2"
+
+elif [ "$avail" -ge 45 ]; then
+  # COMPACT: line 1 = short project + branch + model_tiny + ctx gauge
+  #          line 2 = c% + w% with gauges
+  line1="${C_RED}${project_short}${R}"
+  [ -n "$git_branch" ] && line1+="  ${C_GREEN}${git_branch}${R}"
+  line1+="${sep}${C_PURPLE}${model_tiny}${R}"
+  line1+="${sep}$(bgauge "$ctx_pct" 8 context) $(cpct $ctx_pct context)"
+  line2="${C_MUTED}c${R} $(bgauge "$current_pct" 6 budget) $(cpct $current_pct budget)"
+  [ -n "$current_reset" ] && line2+=" ${C_MUTED}${current_reset}${R}"
+  line2+="${sep}${C_MUTED}w${R} $(bgauge "$weekly_pct" 6 budget) $(cpct $weekly_pct budget)"
+  if [ "$extra_enabled" = "true" ]; then
+    line2+="${sep}${C_MUTED}ext${R} $(bgauge "$extra_pct" 6 budget) ${C_MUTED}${extra_remaining} left${R}"
+  fi
+  printf '%b\n%b' "$line1" "$line2"
+
+elif [ "$avail" -ge 30 ]; then
+  # NARROW: 1 line, short project + model_tiny + percentages
+  line="${C_RED}${project_short}${R}"
+  [ -n "$git_branch" ] && line+="  ${C_GREEN}${git_branch}${R}"
+  line+="${sep}${C_PURPLE}${model_tiny}${R}"
+  line+="${sep}$(cpct $ctx_pct context)"
+  line+="${sep}${C_MUTED}c${R}$(cpct $current_pct budget)"
+  line+="${sep}${C_MUTED}w${R}$(cpct $weekly_pct budget)"
+  printf '%b' "$line"
+
+else
+  # ULTRACOMPACT: branch + model_tiny + percentages, no dividers
+  line=""
+  [ -n "$git_branch" ] && line+="${C_GREEN}${git_branch}${R}" || line+="${C_RED}${project_short}${R}"
+  line+=" ${C_PURPLE}${model_tiny}${R}"
+  line+=" $(cpct $ctx_pct context)"
+  line+=" ${C_MUTED}c${R}$(cpct $current_pct budget)"
+  line+=" ${C_MUTED}w${R}$(cpct $weekly_pct budget)"
+  printf '%b' "$line"
+fi
 
 exit 0
