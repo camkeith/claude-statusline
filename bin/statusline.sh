@@ -299,7 +299,7 @@ sep=" ${C_OVERLAY}|${R} "
 # stdin is JSON, so tput/stty need /dev/tty to reach the real terminal
 term_cols=$(tput cols < /dev/tty 2>/dev/null || stty size < /dev/tty 2>/dev/null | awk '{print $2}' || echo 80)
 # Right-side Claude Code chrome (effort, tokens, version) shares the first line.
-avail=$((term_cols *  1 / 2))
+avail=$((term_cols - 35))
 
 # Color-coded percentage (no gauge bar). Args: pct, mode
 cpct() {
@@ -363,7 +363,7 @@ model_line_vis=$((${#project_name} + 2 + ${#git_branch} + 3 + ${#model_name} + 3
 full_model_vis=$((${#project_name} + 2 + ${#git_branch} + 3 + ${#model_full} + 3 + 10 + 1 + 4))
 full_line_vis=$full_model_vis
 
-if [ "$avail" -ge "$full_line_vis" ]; then
+if [ "$avail" -ge 88 ] && [ "$avail" -ge "$full_line_vis" ]; then
   # FULL: line 1 = project + branch + diffs + model + ctx gauge
   #       line 2 = c gauge + reset | w gauge + reset | ext
   line1="${C_RED}${project_name}${R}"
@@ -380,7 +380,7 @@ if [ "$avail" -ge "$full_line_vis" ]; then
   fi
   printf '%b\n%b' "$line1" "$line2"
 
-elif [ "$avail" -ge "$model_line_vis" ]; then
+elif [ "$avail" -ge 88 ] && [ "$avail" -ge "$model_line_vis" ]; then
   # WIDE: line 1 = project + branch + model + ctx%
   #       line 2 = usage gauges + resets
   line1="${C_RED}${project_name}${R}"
@@ -397,7 +397,7 @@ elif [ "$avail" -ge "$model_line_vis" ]; then
   fi
   printf '%b\n%b' "$line1" "$line2"
 
-elif [ "$avail" -ge 45 ]; then
+elif [ "$avail" -ge 56 ]; then
   # COMPACT: line 1 = short project + branch + model_tiny + ctx gauge
   #          line 2 = c% + w% with gauges
   line1="${C_RED}${project_short}${R}"
@@ -412,7 +412,7 @@ elif [ "$avail" -ge 45 ]; then
   fi
   printf '%b\n%b' "$line1" "$line2"
 
-elif [ "$avail" -ge 30 ]; then
+elif [ "$avail" -ge 36 ]; then
   # NARROW: 1 line, short project + model_tiny + percentages
   line="${C_RED}${project_short}${R}"
   [ -n "$git_branch" ] && line+="  ${C_GREEN}${git_branch}${R}"
