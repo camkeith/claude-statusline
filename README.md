@@ -14,9 +14,17 @@ Truncated project name, tiny model, context gauge bar, and abbreviated usage gau
 
 ![Compact layout](./.github/screenshot-compact.png)
 
-### Narrow and Ultracompact
+### Narrow (small terminals, 1 line)
 
-On very small screens, the status line drops to a single line with just percentages and no gauge bars.
+Short project name, tiny model, color-coded percentages with dividers.
+
+![Narrow layout](./.github/screenshot-narrow.png)
+
+### Ultracompact (smallest terminals, 1 line)
+
+Branch, model, and percentages with no dividers.
+
+![Ultracompact layout](./.github/screenshot-ultracompact.png)
 
 ## Features
 
