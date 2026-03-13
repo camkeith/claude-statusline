@@ -52,14 +52,11 @@ Backs up your existing status line script and settings, copies the new script to
 
 ## Requirements
 
-- [jq](https://jqlang.github.io/jq/) for parsing JSON
-- curl for fetching rate limit data
-- git for branch info
-
-On macOS:
+Requires [jq](https://jqlang.github.io/jq/) for JSON parsing (curl and git are typically preinstalled):
 
 ```bash
-brew install jq
+brew install jq        # macOS
+sudo apt install jq    # Debian/Ubuntu
 ```
 
 ## Uninstall
