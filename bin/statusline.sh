@@ -236,28 +236,42 @@ get_oauth_token() {
   echo ""
 }
 
+USAGE_LOCK="/tmp/claude/statusline-usage.lock"
+CACHE_TTL=300  # 5 minutes; shared across all sessions
+
 usage_data=""
 needs_refresh=true
 if [ -f "$USAGE_CACHE" ]; then
   cache_age=$(( $(date +%s) - $(stat -f%m "$USAGE_CACHE" 2>/dev/null || echo 0) ))
-  [ "$cache_age" -lt 60 ] && needs_refresh=false && usage_data=$(cat "$USAGE_CACHE" 2>/dev/null)
+  [ "$cache_age" -lt "$CACHE_TTL" ] && needs_refresh=false && usage_data=$(cat "$USAGE_CACHE" 2>/dev/null)
 fi
 if $needs_refresh; then
-  tok=$(get_oauth_token)
-  if [ -n "$tok" ] && [ "$tok" != "null" ]; then
-    resp=$(curl -s --max-time 5 \
-      -H "Accept: application/json" \
-      -H "Content-Type: application/json" \
-      -H "Authorization: Bearer $tok" \
-      -H "anthropic-beta: oauth-2025-04-20" \
-      -H "User-Agent: claude-code/2.1.74" \
-      "https://api.anthropic.com/api/oauth/usage" 2>/dev/null)
-    if [ -n "$resp" ] && echo "$resp" | jq -e '.five_hour' >/dev/null 2>&1; then
-      usage_data="$resp"
-      echo "$resp" > "$USAGE_CACHE"
-    fi
+  # Clean up stale lock (older than 10 seconds means the holder crashed)
+  if [ -f "$USAGE_LOCK" ]; then
+    lock_age=$(( $(date +%s) - $(stat -f%m "$USAGE_LOCK" 2>/dev/null || echo 0) ))
+    [ "$lock_age" -gt 10 ] && rm -f "$USAGE_LOCK"
   fi
-  # Fall back to stale cache
+  # Lock prevents multiple sessions from refreshing simultaneously
+  if ( set -o noclobber; echo $$ > "$USAGE_LOCK" ) 2>/dev/null; then
+    trap 'rm -f "$USAGE_LOCK"' EXIT
+    tok=$(get_oauth_token)
+    if [ -n "$tok" ] && [ "$tok" != "null" ]; then
+      resp=$(curl -s --max-time 5 \
+        -H "Accept: application/json" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $tok" \
+        -H "anthropic-beta: oauth-2025-04-20" \
+        -H "User-Agent: claude-code/2.1.74" \
+        "https://api.anthropic.com/api/oauth/usage" 2>/dev/null)
+      if [ -n "$resp" ] && echo "$resp" | jq -e '.five_hour' >/dev/null 2>&1; then
+        usage_data="$resp"
+        echo "$resp" > "$USAGE_CACHE"
+      fi
+    fi
+    rm -f "$USAGE_LOCK"
+    trap - EXIT
+  fi
+  # Fall back to stale cache (another session is refreshing, or refresh failed)
   [ -z "$usage_data" ] && [ -f "$USAGE_CACHE" ] && usage_data=$(cat "$USAGE_CACHE" 2>/dev/null)
 fi
 
