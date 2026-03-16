@@ -10,25 +10,25 @@ A width-adaptive status line for Claude Code that shows model, context usage, ra
 
 Project name, branch, diffs, full model name, context gauge bar, usage gauges with reset times, and extra budget.
 
-![Full layout](./.github/screenshot-full.png)
+![Full layout](https://raw.githubusercontent.com/ckeith26/claude-statusline/main/.github/screenshot-full.png)
 
 ### Compact (narrower terminals, 2 lines)
 
 Truncated project name, tiny model, context gauge bar, and abbreviated usage gauges.
 
-![Compact layout](./.github/screenshot-compact.png)
+![Compact layout](https://raw.githubusercontent.com/ckeith26/claude-statusline/main/.github/screenshot-compact.png)
 
 ### Narrow (small terminals, 1 line)
 
 Short project name, tiny model, color-coded percentages with dividers.
 
-![Narrow layout](./.github/screenshot-narrow.png)
+![Narrow layout](https://raw.githubusercontent.com/ckeith26/claude-statusline/main/.github/screenshot-narrow.png)
 
 ### Ultracompact (smallest terminals, 1 line)
 
 Branch, model, and percentages with no dividers.
 
-![Ultracompact layout](./.github/screenshot-ultracompact.png)
+![Ultracompact layout](https://raw.githubusercontent.com/ckeith26/claude-statusline/main/.github/screenshot-ultracompact.png)
 
 ## Features
 
