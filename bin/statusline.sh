@@ -237,19 +237,22 @@ get_oauth_token() {
 }
 
 USAGE_LOCK="/tmp/claude/statusline-usage.lock"
-CACHE_TTL=300  # 5 minutes; shared across all sessions
+CACHE_TTL=60  # 1 minute; embedded timestamp controls freshness
 
+now=$(date +%s)
 usage_data=""
 needs_refresh=true
 if [ -f "$USAGE_CACHE" ]; then
-  cache_age=$(( $(date +%s) - $(stat -f%m "$USAGE_CACHE" 2>/dev/null || echo 0) ))
-  [ "$cache_age" -lt "$CACHE_TTL" ] && needs_refresh=false && usage_data=$(cat "$USAGE_CACHE" 2>/dev/null)
+  usage_data=$(cat "$USAGE_CACHE" 2>/dev/null)
+  fetched_at=$(echo "$usage_data" | jq -r '.fetched_at // 0' 2>/dev/null)
+  cache_age=$((now - fetched_at))
+  [ "$cache_age" -lt "$CACHE_TTL" ] && needs_refresh=false
 fi
 if $needs_refresh; then
-  # Clean up stale lock (older than 10 seconds means the holder crashed)
+  # Clean up stale lock (older than 15 seconds means the holder crashed)
   if [ -f "$USAGE_LOCK" ]; then
-    lock_age=$(( $(date +%s) - $(stat -f%m "$USAGE_LOCK" 2>/dev/null || echo 0) ))
-    [ "$lock_age" -gt 10 ] && rm -f "$USAGE_LOCK"
+    lock_age=$(( now - $(stat -f%m "$USAGE_LOCK" 2>/dev/null || echo 0) ))
+    [ "$lock_age" -gt 15 ] && rm -f "$USAGE_LOCK"
   fi
   # Lock prevents multiple sessions from refreshing simultaneously
   if ( set -o noclobber; echo $$ > "$USAGE_LOCK" ) 2>/dev/null; then
@@ -264,8 +267,9 @@ if $needs_refresh; then
         -H "User-Agent: claude-code/2.1.74" \
         "https://api.anthropic.com/api/oauth/usage" 2>/dev/null)
       if [ -n "$resp" ] && echo "$resp" | jq -e '.five_hour' >/dev/null 2>&1; then
-        usage_data="$resp"
-        echo "$resp" > "$USAGE_CACHE"
+        usage_data=$(echo "$resp" | jq --argjson ts "$now" '. + {fetched_at: $ts}')
+        echo "$usage_data" > "${USAGE_CACHE}.$$"
+        mv -f "${USAGE_CACHE}.$$" "$USAGE_CACHE"
       fi
     fi
     rm -f "$USAGE_LOCK"

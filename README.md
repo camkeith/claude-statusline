@@ -1,34 +1,27 @@
 # claude-statusline
 
-[![npm version](https://img.shields.io/npm/v/@ckeith26/claude-statusline)](https://www.npmjs.com/package/@ckeith26/claude-statusline)
-[![npm downloads](https://img.shields.io/npm/dm/@ckeith26/claude-statusline)](https://www.npmjs.com/package/@ckeith26/claude-statusline)
-[![license](https://img.shields.io/npm/l/@ckeith26/claude-statusline)](./LICENSE)
+[![npm version](https://img.shields.io/npm/v/@camkeith/claude-statusline)](https://www.npmjs.com/package/@camkeith/claude-statusline)
+[![npm downloads](https://img.shields.io/npm/dm/@camkeith/claude-statusline)](https://www.npmjs.com/package/@camkeith/claude-statusline)
+[![license](https://img.shields.io/npm/l/@camkeith/claude-statusline)](./LICENSE)
 
 A width-adaptive status line for Claude Code that shows model, context usage, rate limits, git info, and extra usage budget. Automatically adjusts its layout based on available terminal width.
 
-### Full (wide terminals, 2 lines)
+![Full layout](https://raw.githubusercontent.com/camkeith/claude-statusline/main/.github/screenshot-full.png)
 
-Project name, branch, diffs, full model name, context gauge bar, usage gauges with reset times, and extra budget.
+## Install
 
-![Full layout](https://raw.githubusercontent.com/ckeith26/claude-statusline/main/.github/screenshot-full.png)
+```bash
+npx @camkeith/claude-statusline
+```
 
-### Compact (narrower terminals, 2 lines)
+Backs up your existing status line script and settings, copies the new script to `~/.claude/statusline.sh`, and configures your Claude Code settings.
 
-Truncated project name, tiny model, context gauge bar, and abbreviated usage gauges.
+Requires [jq](https://jqlang.github.io/jq/) for JSON parsing (curl and git are typically preinstalled):
 
-![Compact layout](https://raw.githubusercontent.com/ckeith26/claude-statusline/main/.github/screenshot-compact.png)
-
-### Narrow (small terminals, 1 line)
-
-Short project name, tiny model, color-coded percentages with dividers.
-
-![Narrow layout](https://raw.githubusercontent.com/ckeith26/claude-statusline/main/.github/screenshot-narrow.png)
-
-### Ultracompact (smallest terminals, 1 line)
-
-Branch, model, and percentages with no dividers.
-
-![Ultracompact layout](https://raw.githubusercontent.com/ckeith26/claude-statusline/main/.github/screenshot-ultracompact.png)
+```bash
+brew install jq        # macOS
+sudo apt install jq    # Debian/Ubuntu
+```
 
 ## Features
 
@@ -40,29 +33,40 @@ Branch, model, and percentages with no dividers.
 - Extra usage budget shown as "$X left"
 - Model name with context window size
 - Project name with smart truncation for long names
-- Cached OAuth usage API calls (60s TTL)
+- Multi-terminal-safe cached API calls (60s TTL, atomic writes, lock-based deduplication)
 
-## Install
+## Layouts
 
-```bash
-npx @ckeith26/claude-statusline
-```
+Adapts to terminal width automatically:
 
-Backs up your existing status line script and settings, copies the new script to `~/.claude/statusline.sh`, and configures your Claude Code settings.
+### Full (wide terminals, 2 lines)
 
-## Requirements
+Project name, branch, diffs, full model name, context gauge bar, usage gauges with reset times, and extra budget.
 
-Requires [jq](https://jqlang.github.io/jq/) for JSON parsing (curl and git are typically preinstalled):
+![Full layout](https://raw.githubusercontent.com/camkeith/claude-statusline/main/.github/screenshot-full.png)
 
-```bash
-brew install jq        # macOS
-sudo apt install jq    # Debian/Ubuntu
-```
+### Compact (narrower terminals, 2 lines)
+
+Truncated project name, tiny model, context gauge bar, and abbreviated usage gauges.
+
+![Compact layout](https://raw.githubusercontent.com/camkeith/claude-statusline/main/.github/screenshot-compact.png)
+
+### Narrow (small terminals, 1 line)
+
+Short project name, tiny model, color-coded percentages with dividers.
+
+![Narrow layout](https://raw.githubusercontent.com/camkeith/claude-statusline/main/.github/screenshot-narrow.png)
+
+### Ultracompact (smallest terminals, 1 line)
+
+Branch, model, and percentages with no dividers.
+
+![Ultracompact layout](https://raw.githubusercontent.com/camkeith/claude-statusline/main/.github/screenshot-ultracompact.png)
 
 ## Uninstall
 
 ```bash
-npx @ckeith26/claude-statusline --uninstall
+npx @camkeith/claude-statusline --uninstall
 ```
 
 Restores your previous status line script and settings from backup. If there was no previous status line, it removes the script and cleans up settings.
