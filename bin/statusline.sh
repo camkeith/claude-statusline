@@ -106,6 +106,11 @@ gauge() {
 fmt_reset() {
   local iso="$1"
   [ -z "$iso" ] || [ "$iso" = "null" ] && return
+  # Claude Code's stdin rate_limits give resets_at as Unix epoch seconds already
+  if [[ "$iso" =~ ^[0-9]+$ ]]; then
+    fmt_epoch "$iso" "$2"
+    return
+  fi
 
   # Strip fractional seconds: "2026-03-13T19:00:00.511778+00:00" -> "2026-03-13T19:00:00+00:00"
   local clean
@@ -164,8 +169,12 @@ fmt_reset() {
   # Fallback: GNU date handles ISO offsets natively
   [ -z "$epoch" ] && epoch=$(date -d "$clean" "+%s" 2>/dev/null)
   [ -z "$epoch" ] && return
+  fmt_epoch "$epoch" "$2"
+}
 
-  # Format in local time
+# Format Unix epoch seconds as a local reset time. Args: epoch, mode (short|full)
+fmt_epoch() {
+  local epoch="$1"
   local today_date reset_date time_str
   today_date=$(date "+%Y-%m-%d")
   reset_date=$(date -r "$epoch" "+%Y-%m-%d" 2>/dev/null)
@@ -266,7 +275,7 @@ if $needs_refresh; then
         -H "anthropic-beta: oauth-2025-04-20" \
         -H "User-Agent: claude-code/2.1.74" \
         "https://api.anthropic.com/api/oauth/usage" 2>/dev/null)
-      if [ -n "$resp" ] && echo "$resp" | jq -e '.five_hour' >/dev/null 2>&1; then
+      if [ -n "$resp" ] && echo "$resp" | jq -e '.seven_day or .five_hour' >/dev/null 2>&1; then
         usage_data=$(echo "$resp" | jq --argjson ts "$now" '. + {fetched_at: $ts}')
         echo "$usage_data" > "${USAGE_CACHE}.$$"
         mv -f "${USAGE_CACHE}.$$" "$USAGE_CACHE"
@@ -280,18 +289,31 @@ if $needs_refresh; then
 fi
 
 # --- Parse usage data ---
-weekly_pct=0; weekly_reset=""
-current_pct=0; current_reset=""
+# Prefer the rate_limits Claude Code passes on stdin; the OAuth cache is the fallback for
+# older Claude Code versions and the start of a session. Either window can be missing
+# (weekly-only plans have no five_hour window), so each is shown only when present.
+rl_src="$usage_data"; pct_key="utilization"
+if echo "$input" | jq -e '.rate_limits.seven_day or .rate_limits.five_hour' >/dev/null 2>&1; then
+  rl_src=$(echo "$input" | jq -c '.rate_limits'); pct_key="used_percentage"
+fi
+has_weekly=false; weekly_pct=0; weekly_reset=""; weekly_reset_full=""
+has_current=false; current_pct=0; current_reset=""
 extra_pct=0; extra_used=""; extra_limit=""; extra_enabled=false
-if [ -n "$usage_data" ]; then
-  weekly_pct=$(echo "$usage_data" | jq -r '.seven_day.utilization // 0' | awk '{printf "%.0f", $1}')
-  current_pct=$(echo "$usage_data" | jq -r '.five_hour.utilization // 0' | awk '{printf "%.0f", $1}')
+if [ -n "$rl_src" ] && echo "$rl_src" | jq -e '.seven_day' >/dev/null 2>&1; then
+  has_weekly=true
+  weekly_pct=$(echo "$rl_src" | jq -r --arg k "$pct_key" '.seven_day[$k] // 0' | awk '{printf "%.0f", $1}')
   [ "$weekly_pct" -gt 100 ] 2>/dev/null && weekly_pct=100
+  weekly_reset_raw=$(echo "$rl_src" | jq -r '.seven_day.resets_at // empty')
+  weekly_reset=$(fmt_reset "$weekly_reset_raw" short)
+  weekly_reset_full=$(fmt_reset "$weekly_reset_raw" full)
+fi
+if [ -n "$rl_src" ] && echo "$rl_src" | jq -e '.five_hour' >/dev/null 2>&1; then
+  has_current=true
+  current_pct=$(echo "$rl_src" | jq -r --arg k "$pct_key" '.five_hour[$k] // 0' | awk '{printf "%.0f", $1}')
   [ "$current_pct" -gt 100 ] 2>/dev/null && current_pct=100
-  weekly_reset_iso=$(echo "$usage_data" | jq -r '.seven_day.resets_at // empty')
-  weekly_reset=$(fmt_reset "$weekly_reset_iso" short)
-  weekly_reset_full=$(fmt_reset "$weekly_reset_iso" full)
-  current_reset=$(fmt_reset "$(echo "$usage_data" | jq -r '.five_hour.resets_at // empty')" short)
+  current_reset=$(fmt_reset "$(echo "$rl_src" | jq -r '.five_hour.resets_at // empty')" short)
+fi
+if [ -n "$usage_data" ]; then
   # Extra usage (only show if enabled and budget > 0)
   extra_enabled=$(echo "$usage_data" | jq -r '.extra_usage.is_enabled // false')
   if [ "$extra_enabled" = "true" ]; then
@@ -363,6 +385,31 @@ bgauge() {
   for ((i=0; i<nf; i++)); do filled+=" "; done
   for ((i=0; i<ne; i++)); do empty+=" "; done
   printf "%b%s%b%s%b" "$fill_bg" "$filled" "$empty_bg" "$empty" "$R"
+}
+
+# Usage line for the two-line tiers: only the windows that exist, joined by separators.
+# Args: current label, weekly label, weekly reset text, extra label
+usage_line() {
+  local out=""
+  if $has_current; then
+    out+="${C_MUTED}$1${R} $(bgauge "$current_pct" 6 budget) $(cpct $current_pct budget)"
+    [ -n "$current_reset" ] && out+=" ${C_MUTED}${current_reset}${R}"
+  fi
+  if $has_weekly; then
+    [ -n "$out" ] && out+="${sep}"
+    out+="${C_MUTED}$2${R} $(bgauge "$weekly_pct" 6 budget) $(cpct $weekly_pct budget)"
+    [ -n "$3" ] && out+=" ${C_MUTED}$3${R}"
+  fi
+  if [ "$extra_enabled" = "true" ]; then
+    [ -n "$out" ] && out+="${sep}"
+    out+="${C_MUTED}$4${R} $(bgauge "$extra_pct" 6 budget) ${C_MUTED}${extra_remaining} left${R}"
+  fi
+  printf '%s' "$out"
+}
+
+# Print line 1, plus line 2 only when there is usage to show
+print_lines() {
+  if [ -n "$2" ]; then printf '%b\n%b' "$1" "$2"; else printf '%b' "$1"; fi
 }
 
 # --- Build single-line output based on available width ---
@@ -451,15 +498,9 @@ if [ "$avail" -ge 88 ] && [ "$avail" -ge "$full_line_vis" ]; then
   [ -n "$diff_str" ] && line1+=" ${C_AMBER}[${diff_str}]${R}"
   line1+="${sep}${C_PURPLE}${model_full}${R}"
   line1+="${sep}$(bgauge "$ctx_pct" 8 context) $(cpct $ctx_pct context)"
-  line2="${C_MUTED}current${R} $(bgauge "$current_pct" 6 budget) $(cpct $current_pct budget)"
-  [ -n "$current_reset" ] && line2+=" ${C_MUTED}${current_reset}${R}"
-  line2+="${sep}${C_MUTED}weekly${R} $(bgauge "$weekly_pct" 6 budget) $(cpct $weekly_pct budget)"
-  [ -n "$weekly_reset_full" ] && line2+=" ${C_MUTED}${weekly_reset_full}${R}"
-  if [ "$extra_enabled" = "true" ]; then
-    line2+="${sep}${C_MUTED}extra${R} $(bgauge "$extra_pct" 6 budget) ${C_MUTED}${extra_remaining} left${R}"
-  fi
+  line2=$(usage_line current weekly "$weekly_reset_full" extra)
   [ -n "$NS" ] && line1+="${sep}${NS}"
-  printf '%b\n%b' "$line1" "$line2"
+  print_lines "$line1" "$line2"
 
 elif [ "$avail" -ge 88 ] && [ "$avail" -ge "$model_line_vis" ]; then
   # WIDE: line 1 = project + branch + model + ctx%
@@ -469,15 +510,9 @@ elif [ "$avail" -ge 88 ] && [ "$avail" -ge "$model_line_vis" ]; then
   [ -n "$diff_str" ] && line1+=" ${C_AMBER}[${diff_str}]${R}"
   line1+="${sep}${C_PURPLE}${model_name}${R}"
   line1+="${sep}$(cpct $ctx_pct context)"
-  line2="${C_MUTED}c${R} $(bgauge "$current_pct" 6 budget) $(cpct $current_pct budget)"
-  [ -n "$current_reset" ] && line2+=" ${C_MUTED}${current_reset}${R}"
-  line2+="${sep}${C_MUTED}w${R} $(bgauge "$weekly_pct" 6 budget) $(cpct $weekly_pct budget)"
-  [ -n "$weekly_reset" ] && line2+=" ${C_MUTED}${weekly_reset}${R}"
-  if [ "$extra_enabled" = "true" ]; then
-    line2+="${sep}${C_MUTED}ext${R} $(bgauge "$extra_pct" 6 budget) ${C_MUTED}${extra_remaining} left${R}"
-  fi
+  line2=$(usage_line c w "$weekly_reset" ext)
   [ -n "$NS" ] && line1+="${sep}${NS}"
-  printf '%b\n%b' "$line1" "$line2"
+  print_lines "$line1" "$line2"
 
 elif [ "$avail" -ge 56 ]; then
   # COMPACT: line 1 = short project + branch + model_tiny + ctx gauge
@@ -486,14 +521,9 @@ elif [ "$avail" -ge 56 ]; then
   [ -n "$git_branch" ] && line1+="  ${C_GREEN}${git_branch}${R}"
   line1+="${sep}${C_PURPLE}${model_tiny}${R}"
   line1+="${sep}$(bgauge "$ctx_pct" 8 context) $(cpct $ctx_pct context)"
-  line2="${C_MUTED}c${R} $(bgauge "$current_pct" 6 budget) $(cpct $current_pct budget)"
-  [ -n "$current_reset" ] && line2+=" ${C_MUTED}${current_reset}${R}"
-  line2+="${sep}${C_MUTED}w${R} $(bgauge "$weekly_pct" 6 budget) $(cpct $weekly_pct budget)"
-  if [ "$extra_enabled" = "true" ]; then
-    line2+="${sep}${C_MUTED}ext${R} $(bgauge "$extra_pct" 6 budget) ${C_MUTED}${extra_remaining} left${R}"
-  fi
+  line2=$(usage_line c w "" ext)
   [ -n "$NS" ] && line1+="${sep}${NS}"
-  printf '%b\n%b' "$line1" "$line2"
+  print_lines "$line1" "$line2"
 
 elif [ "$avail" -ge 36 ]; then
   # NARROW: 1 line, short project + model_tiny + percentages
@@ -501,8 +531,8 @@ elif [ "$avail" -ge 36 ]; then
   [ -n "$git_branch" ] && line+="  ${C_GREEN}${git_branch}${R}"
   line+="${sep}${C_PURPLE}${model_tiny}${R}"
   line+="${sep}$(cpct $ctx_pct context)"
-  line+="${sep}${C_MUTED}c${R}$(cpct $current_pct budget)"
-  line+="${sep}${C_MUTED}w${R}$(cpct $weekly_pct budget)"
+  $has_current && line+="${sep}${C_MUTED}c${R}$(cpct $current_pct budget)"
+  $has_weekly && line+="${sep}${C_MUTED}w${R}$(cpct $weekly_pct budget)"
   [ -n "$NS" ] && line+=" ${NS}"
   printf '%b' "$line"
 
@@ -512,8 +542,8 @@ else
   [ -n "$git_branch" ] && line+="${C_GREEN}${git_branch}${R}" || line+="${C_RED}${project_short}${R}"
   line+=" ${C_PURPLE}${model_tiny}${R}"
   line+=" $(cpct $ctx_pct context)"
-  line+=" ${C_MUTED}c${R}$(cpct $current_pct budget)"
-  line+=" ${C_MUTED}w${R}$(cpct $weekly_pct budget)"
+  $has_current && line+=" ${C_MUTED}c${R}$(cpct $current_pct budget)"
+  $has_weekly && line+=" ${C_MUTED}w${R}$(cpct $weekly_pct budget)"
   [ -n "$NS" ] && line+=" ${NS}"
   printf '%b' "$line"
 fi
