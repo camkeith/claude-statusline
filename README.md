@@ -30,6 +30,7 @@ sudo apt install jq    # Debian/Ubuntu
 - Git branch and diff stats (modified, added, deleted files)
 - Context window usage with color-coded thresholds
 - Weekly and 5-hour rate limit tracking with reset times, read from the data Claude Code passes to the status line; a window your plan does not have (like the 5-hour one on weekly-only plans) is hidden instead of shown as 0%
+- Fable's separate weekly limit, shown as the percent you have left, when your plan has one
 - Extra usage budget shown as "$X left"
 - Model name with context window size
 - Project name with smart truncation for long names

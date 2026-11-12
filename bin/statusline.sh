@@ -328,6 +328,14 @@ if [ -n "$usage_data" ]; then
     fi
   fi
 fi
+# Fable's own weekly limit. Only the OAuth response has it, as a weekly_scoped entry in limits[].
+has_fable=false; fable_pct=0
+fable_raw=$(echo "$usage_data" | jq -r 'first(.limits[]? | select(.kind == "weekly_scoped" and ((.scope.model.display_name // "") | startswith("Fable")))) | .percent // empty' 2>/dev/null)
+if [ -n "$fable_raw" ]; then
+  has_fable=true
+  fable_pct=$(printf '%s' "$fable_raw" | awk '{printf "%.0f", $1}')
+  [ "$fable_pct" -gt 100 ] 2>/dev/null && fable_pct=100
+fi
 
 # --- Separator ---
 sep=" ${C_OVERLAY}|${R} "
@@ -341,9 +349,9 @@ term_cols=$(tput cols < /dev/tty 2>/dev/null || stty size < /dev/tty 2>/dev/null
 # Right-side Claude Code chrome (effort, tokens, version) shares the first line.
 avail=$((term_cols - 35))
 
-# Color-coded percentage (no gauge bar). Args: pct, mode
+# Color-coded percentage (no gauge bar). Args: pct, mode, number to show (default: pct)
 cpct() {
-  local pct=$1 mode=${2:-context}
+  local pct=$1 mode=${2:-context} shown=${3:-$1}
   local color
   if [ "$mode" = "budget" ]; then
     if [ "$pct" -lt 50 ]; then color="$C_GREEN"
@@ -356,7 +364,7 @@ cpct() {
     else color="$C_RED"
     fi
   fi
-  printf "%b%d%%%b" "$color" "$pct" "$R"
+  printf "%b%d%%%b" "$color" "$shown" "$R"
 }
 
 # Background-color gauge. Args: pct, width, mode
@@ -388,7 +396,7 @@ bgauge() {
 }
 
 # Usage line for the two-line tiers: only the windows that exist, joined by separators.
-# Args: current label, weekly label, weekly reset text, extra label
+# Args: current label, weekly label, weekly reset text, extra label, fable label
 usage_line() {
   local out=""
   if $has_current; then
@@ -399,6 +407,11 @@ usage_line() {
     [ -n "$out" ] && out+="${sep}"
     out+="${C_MUTED}$2${R} $(bgauge "$weekly_pct" 6 budget) $(cpct $weekly_pct budget)"
     [ -n "$3" ] && out+=" ${C_MUTED}$3${R}"
+  fi
+  if $has_fable; then
+    # Gauge and color track usage; the number is what is left
+    [ -n "$out" ] && out+="${sep}"
+    out+="${C_MUTED}$5${R} $(bgauge "$fable_pct" 6 budget) $(cpct $fable_pct budget $((100 - fable_pct))) ${C_MUTED}left${R}"
   fi
   if [ "$extra_enabled" = "true" ]; then
     [ -n "$out" ] && out+="${sep}"
@@ -498,7 +511,7 @@ if [ "$avail" -ge 88 ] && [ "$avail" -ge "$full_line_vis" ]; then
   [ -n "$diff_str" ] && line1+=" ${C_AMBER}[${diff_str}]${R}"
   line1+="${sep}${C_PURPLE}${model_full}${R}"
   line1+="${sep}$(bgauge "$ctx_pct" 8 context) $(cpct $ctx_pct context)"
-  line2=$(usage_line current weekly "$weekly_reset_full" extra)
+  line2=$(usage_line current weekly "$weekly_reset_full" extra fable)
   [ -n "$NS" ] && line1+="${sep}${NS}"
   print_lines "$line1" "$line2"
 
@@ -510,7 +523,7 @@ elif [ "$avail" -ge 88 ] && [ "$avail" -ge "$model_line_vis" ]; then
   [ -n "$diff_str" ] && line1+=" ${C_AMBER}[${diff_str}]${R}"
   line1+="${sep}${C_PURPLE}${model_name}${R}"
   line1+="${sep}$(cpct $ctx_pct context)"
-  line2=$(usage_line c w "$weekly_reset" ext)
+  line2=$(usage_line c w "$weekly_reset" ext f)
   [ -n "$NS" ] && line1+="${sep}${NS}"
   print_lines "$line1" "$line2"
 
@@ -521,7 +534,7 @@ elif [ "$avail" -ge 56 ]; then
   [ -n "$git_branch" ] && line1+="  ${C_GREEN}${git_branch}${R}"
   line1+="${sep}${C_PURPLE}${model_tiny}${R}"
   line1+="${sep}$(bgauge "$ctx_pct" 8 context) $(cpct $ctx_pct context)"
-  line2=$(usage_line c w "" ext)
+  line2=$(usage_line c w "" ext f)
   [ -n "$NS" ] && line1+="${sep}${NS}"
   print_lines "$line1" "$line2"
 
@@ -533,6 +546,7 @@ elif [ "$avail" -ge 36 ]; then
   line+="${sep}$(cpct $ctx_pct context)"
   $has_current && line+="${sep}${C_MUTED}c${R}$(cpct $current_pct budget)"
   $has_weekly && line+="${sep}${C_MUTED}w${R}$(cpct $weekly_pct budget)"
+  $has_fable && line+="${sep}${C_MUTED}f${R}$(cpct $fable_pct budget $((100 - fable_pct)))${C_MUTED}left${R}"
   [ -n "$NS" ] && line+=" ${NS}"
   printf '%b' "$line"
 
@@ -544,6 +558,7 @@ else
   line+=" $(cpct $ctx_pct context)"
   $has_current && line+=" ${C_MUTED}c${R}$(cpct $current_pct budget)"
   $has_weekly && line+=" ${C_MUTED}w${R}$(cpct $weekly_pct budget)"
+  $has_fable && line+=" ${C_MUTED}f${R}$(cpct $fable_pct budget $((100 - fable_pct)))${C_MUTED}left${R}"
   [ -n "$NS" ] && line+=" ${NS}"
   printf '%b' "$line"
 fi
