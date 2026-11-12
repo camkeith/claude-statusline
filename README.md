@@ -29,7 +29,7 @@ sudo apt install jq    # Debian/Ubuntu
 - Background-colored gauge bars (no Unicode width glitches)
 - Git branch and diff stats (modified, added, deleted files)
 - Context window usage with color-coded thresholds
-- 5-hour and weekly rate limit tracking with reset times
+- Weekly and 5-hour rate limit tracking with reset times, read from the data Claude Code passes to the status line; a window your plan does not have (like the 5-hour one on weekly-only plans) is hidden instead of shown as 0%
 - Extra usage budget shown as "$X left"
 - Model name with context window size
 - Project name with smart truncation for long names
